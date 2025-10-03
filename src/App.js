@@ -270,7 +270,7 @@ function App() {
               className={`panel prediction-panel card aqi-${airQuality.key}`}
               style={{ background: airQuality.bg }}
             >
-              {/* <h3>Next Hour Prediction</h3> */}
+              <h3>Next Hour Prediction</h3>
               <div className="air-quality-category" style={{ color: 'white' }}>
                 {airQuality.name}
               </div>
