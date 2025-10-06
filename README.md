@@ -131,10 +131,7 @@ Base URL: your Render service URL (e.g., `https://<your-backend>.onrender.com`)
 
 ---
 
-## AQI reference and color legend
+The AQI legend maps air quality to easy-to-read health categories and colors: Good (0–50, green), Moderate (51–100, yellow), Unhealthy for Sensitive Groups (101–150, orange), Unhealthy (151–200, red), Very Unhealthy (201–300, purple), and Hazardous (301–500, maroon). In the app, the display color changes dynamically to the corresponding category based on the predicted next-hour air quality, so users can instantly see risk levels at a glance.
 
-This section explains the Air Quality Index categories and their colors, matching the legend you provided.
-
-If your visualization shows AQI, use these categories to color the UI:
 
 <img width="588" height="500" alt="image" src="https://github.com/user-attachments/assets/557dda2d-9a96-453e-bcc9-384cc7bb85d4" />
