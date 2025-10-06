@@ -1,4 +1,5 @@
-# Chicago Real‑Time Air Quality (Backend on Render, Frontend on Vercel)
+# Chicago Real‑Time Air Quality Prediction
+[Link](https://github.com/Tilak2203/Chicago-air-quality-vercel)
 
 This project collects hourly air‑quality measurements for Chicago, stores them in MongoDB Atlas, serves them via a Flask API deployed on Render, and visualizes them with a frontend deployed on Vercel. It also predicts the next hour’s PM2.5 using a RandomForest model saved as a pickle file.
 
