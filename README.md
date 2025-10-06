@@ -1,70 +1,138 @@
-# Getting Started with Create React App
+# Chicago Real‑Time Air Quality (Backend on Render, Frontend on Vercel)
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+This project collects hourly air‑quality measurements for Chicago, stores them in MongoDB Atlas, serves them via a Flask API deployed on Render, and visualizes them with a frontend deployed on Vercel. It also predicts the next hour’s PM2.5 using a RandomForest model saved as a pickle file.
 
-## Available Scripts
+- Backend repository (Render): [Chicago-Air-Quality-render](https://github.com/Tilak2203/Chicago-Air-Quality-render)
+- Frontend repository (Vercel): [Chicago-air-quality-vercel](https://github.com/Tilak2203/Chicago-air-quality-vercel)
 
-In the project directory, you can run:
+---
 
-### `npm start`
+## Architecture
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+- Data source: OpenAQ API (sensor IDs for Chicago)
+- Database: MongoDB Atlas (database `air_quality`, collection `measurements`)
+- Model: RandomForestRegressor trained to predict PM2.5 for the next hour; stored as `RandForestModel.pkl`
+- Backend API: Flask app on Render exposes endpoints to read data and get predictions
+- Frontend: React (deployed on Vercel) calls the Render API
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+---
 
-### `npm test`
+## Backend: File structure and purpose
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+Key backend files and what they do (links point to committed code):
 
-### `npm run build`
+- app.py  
+  - Flask application and HTTP endpoints  
+  - Loads the RandomForest model pickle at startup  
+  - Endpoints:
+    - `GET /api/status`: DB health
+    - `GET /api/all-readings`: all measurements ordered by time
+    - `POST /api/predict`: returns next-hour PM2.5 based on most recent row
+    - `GET /api/prediction-history`: last 5 rows with actual vs predicted  
+  - Link: [app.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/app.py#L1-L119)
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+- mongodb.py  
+  - Mongo connection and helpers  
+  - JSONEncoder to serialize ObjectId and datetime  
+  - `get_all_readings`: returns all rows (oldest → newest)  
+  - `get_recent_readings`: returns last N rows (for charts)  
+  - Link: [mongodb.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/mongodb.py#L1-L115)
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+- config.py  
+  - Reads configuration values like `MONGODB_URI`, `OPENAQ_API_KEY`, and `SENSOR_IDS` (IDs for pm1, pm25, RH, temperature, pm03)  
+  - Do not commit real secrets; set them via environment variables in production  
+  - Link: [config.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/config.py#L1-L34)
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+- fetch_data.py  
+  - Interacts with OpenAQ to fetch locations and measurements  
+  - `latest_hourly_measurement`: builds a one‑row DataFrame for the latest timestamp and features, including:
+    - `timestamp`, `pm1`, `pm25`, `Relative Humidity`, `Temperature`, `pm03`
+    - calendar features: `hour`, `day_of_week`, `month`  
+  - Link: [fetch_data.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/fetch_data.py#L1-L103)
 
-### `npm run eject`
+- update_and_push.py  
+  - Periodic “updater” logic to fetch readings and (optionally) append to CSV or push to Mongo  
+  - Compares against last DB timestamp to avoid duplicates  
+  - Link: [update_and_push.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/update_and_push.py#L1-L120)
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+- train_model.py  
+  - Trains the next‑hour PM2.5 model
+  - Loads all measurements from Mongo, sorts chronologically
+  - Creates target `pm25_next_hour` by shifting PM2.5 one step into the future
+  - Time‑ordered train/test split (no shuffle), trains `RandomForestRegressor`
+  - Saves model to `RandForestModel.pkl`  
+  - Link: [train_model.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/train_model.py#L1-L96)
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+- predict.py  
+  - Loads `RandForestModel.pkl` on demand
+  - Reads the latest Mongo row, constructs the feature vector, predicts next‑hour PM2.5  
+  - Used by `POST /api/predict` endpoint  
+  - Link: [predict.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/predict.py#L1-L73)
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+- .github/workflows/updater.yml  
+  - GitHub Actions workflow to run the updater on a schedule (UTC)  
+  - Link: [updater.yml](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/.github/workflows/updater.yml#L1-L36)
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+> Scheduler note: GitHub Actions cron is best‑effort and may drift a few minutes. Keep ingest idempotent (insert only newer rows).
 
-## Learn More
+---
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+## Data preprocessing (preprocess_data.py)
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Preprocessing utilities used to clean and enrich the time‑series sensor data.  
+Source: [preprocess_data.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/preprocess_data.py#L1-L81)
 
-### Code Splitting
+- `load_data(path)`: CSV → DataFrame
+- `convert_to_datetime(df, column='timestamp')`: derives `hour`, `day_of_week`, `month` from a datetime column (ensure `df['timestamp']` is pandas datetime first)
+- `round_df_values(df, decimal_places=2)`: rounds numeric columns; presentation/consistency
+- `remove_outliers_csv(df, column)`: IQR‑based row filter for one column (keep within Q1−1.5·IQR and Q3+1.5·IQR)
+- `calculate_outlier_bounds(df, col)`: returns IQR lower/upper bounds without filtering
+- `return_bounds(col)`: quick pre‑computed lower/upper bounds for known columns (`pm1`, `pm25`, `RH`, `Temp`, `pm03`)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
+Recommended training flow:
+1) Ensure datetime dtype, then `convert_to_datetime`  
+2) Optionally remove/clamp outliers (`calculate_outlier_bounds` or `return_bounds`)  
+3) `round_df_values` for storage/UI
 
-### Analyzing the Bundle Size
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
+## Model: “Next hour” PM2.5 prediction (RandomForest + pickle)
 
-### Making a Progressive Web App
+- Training ([train_model.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/train_model.py#L1-L96)):
+  - Target: `pm25_next_hour = pm25.shift(-1)`
+  - Features: current readings (`pm1`, `RH`, `Temp`, `pm03`) + calendar (`hour`, `day_of_week`, `month`)
+  - Time‑ordered split; RandomForestRegressor; saved as `RandForestModel.pkl`
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
+- Serving ([predict.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/predict.py#L1-L73), [app.py](https://github.com/Tilak2203/Chicago-Air-Quality-render/blob/95bab1e14750050d54db8b6ddd81b46942d2417d/app.py#L1-L119)):
+  - Read latest document, build feature vector, predict next‑hour PM2.5, return JSON
 
-### Advanced Configuration
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
+## API endpoints (backend)
 
-### Deployment
+Base URL: your Render service URL (e.g., `https://<your-backend>.onrender.com`)
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
+- `GET /api/status` – Mongo connectivity status  
+- `GET /api/all-readings` – all readings (oldest → newest) with count and date range  
+- `POST /api/predict` – next‑hour PM2.5 prediction from the latest row  
+- `GET /api/prediction-history` – last 5 rows with actual vs predicted
 
-### `npm run build` fails to minify
+---
 
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+## Frontend (Vercel)
+
+- Configure API base URL via env:
+  - Vite: `VITE_API_BASE=https://<your-backend>.onrender.com`
+  - CRA: `REACT_APP_API_BASE=https://<your-backend>.onrender.com`
+- Typical calls: `/api/all-readings`, `/api/predict`, `/api/prediction-history`
+- Ensure backend CORS allows your Vercel domain (and localhost during dev)
+
+---
+
+## AQI reference and color legend
+
+This section explains the Air Quality Index categories and their colors, matching the legend you provided.
+
+If your visualization shows AQI, use these categories to color the UI:
+
+<img width="588" height="500" alt="image" src="https://github.com/user-attachments/assets/557dda2d-9a96-453e-bcc9-384cc7bb85d4" />
