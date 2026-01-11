@@ -26,7 +26,7 @@ function App() {
   const [endDate, setEndDate] = useState(null);
   const [showGraphs, setShowGraphs] = useState(false);
 
-  // Set date limits: July 1st to current date
+  // Date limits: July 1st 2025 to current latest reading
   const minDate = new Date('2025-07-01');
   const [maxDate, setMaxDate] = useState(new Date());
 
@@ -39,13 +39,30 @@ function App() {
     return new Date(Math.max(...dates));
   };
 
+  // Auto-update maxDate when we get new readings
   useEffect(() => {
     if (readings.length > 0) {
       setMaxDate(getLatestReadingDate(readings));
     }
   }, [readings]);
 
+  // Auto-select last 7 days when data first loads (this fixes the main issue)
   useEffect(() => {
+    if (readings.length > 0 && !startDate && !endDate && !loading) {
+      const now = new Date(maxDate);
+      const sevenDaysAgo = new Date(now);
+      sevenDaysAgo.setDate(now.getDate() - 7);
+      sevenDaysAgo.setHours(0, 0, 0, 0);
+
+      setStartDate(sevenDaysAgo);
+      setEndDate(now);
+      setShowGraphs(true);
+      console.log("Auto-selected last 7 days on initial data load");
+    }
+  }, [readings, maxDate, loading, startDate, endDate]);
+
+  useEffect(() => {
+    // Check connection status
     axios.get(`${API_BASE}/api/status`)
       .then(response => {
         setConnectionStatus(response.data.mongodb_connected ? 'connected' : 'error');
@@ -54,13 +71,15 @@ function App() {
         setConnectionStatus('error');
       });
 
+    // Load initial data
     fetchAllReadings();
     fetchPredictionHistory();
+    fetchModelMetrics(); // optional: load metrics on mount
   }, []);
 
+  // Filter readings when date range changes
   useEffect(() => {
     if (startDate && endDate && readings.length > 0) {
-      // Normalize start to 00:00 local and end to 23:59:59 local
       const start = new Date(startDate);
       start.setHours(0, 0, 0, 0);
       const end = new Date(endDate);
@@ -79,42 +98,54 @@ function App() {
     }
   }, [startDate, endDate, readings]);
 
-  useEffect(() => {
+  const fetchAllReadings = () => {
+    setLoading(true);
+    axios.get(`${API_BASE}/api/all-readings`)
+      .then(response => {
+        setReadings(response.data.readings || []);
+        setLoading(false);
+      })
+      .catch(err => {
+        console.error("Error fetching readings:", err);
+        setError("Failed to load air quality readings");
+        setLoading(false);
+      });
+  };
+
+  const fetchPredictionHistory = () => {
+    axios.get(`${API_BASE}/api/prediction-history`)
+      .then(response => {
+        if (response.data.success) {
+          setPredictionHistory(response.data.data || []);
+        }
+      })
+      .catch(err => {
+        console.error("Error fetching prediction history:", err);
+      });
+  };
+
+  const fetchModelMetrics = () => {
     axios.get(`${API_BASE}/api/model-metrics`)
       .then(response => {
         if (response.data.success) {
           setModelMetrics(response.data.metrics);
         }
       })
-      .catch(() => {});
-  }, []);
-
-  const fetchAllReadings = () => {
-    setLoading(true);
-
-    axios.get(`${API_BASE}/api/all-readings`)
-      .then(response => {
-        setReadings(response.data.readings);
-        setLoading(false);
-      })
-      .catch(err => {
-        console.error("Error fetching data:", err);
-        setError("Failed to load readings");
-        setLoading(false);
-      });
+      .catch(err => console.error("Error fetching model metrics:", err));
   };
 
   const fetchPrediction = () => {
     setPredictionLoading(true);
-
     axios.post(`${API_BASE}/api/predict`)
       .then(response => {
-        setPrediction(response.data);
+        if (response.data.success) {
+          setPrediction(response.data);
+        }
         setPredictionLoading(false);
       })
       .catch(err => {
         console.error("Error fetching prediction:", err);
-        setError("Failed to get prediction");
+        setError("Failed to get PM2.5 prediction");
         setPredictionLoading(false);
       });
   };
@@ -130,7 +161,7 @@ function App() {
 
   const getAirQualityCategory = (pm25Value) => {
     const v = Number(pm25Value);
-    if (isNaN(v)) return { ...airQualityTheme.moderate, key: 'moderate' };
+    if (isNaN(v) || v === null) return { ...airQualityTheme.moderate, key: 'moderate' };
     if (v <= 12) return { ...airQualityTheme.good, key: 'good' };
     if (v <= 35.4) return { ...airQualityTheme.moderate, key: 'moderate' };
     if (v <= 55.4) return { ...airQualityTheme.usg, key: 'usg' };
@@ -145,21 +176,13 @@ function App() {
     setShowGraphs(false);
   };
 
-  const fetchPredictionHistory = () => {
-    axios.get(`${API_BASE}/api/prediction-history`)
-      .then(response => {
-        setPredictionHistory(response.data.data || []);
-      })
-      .catch(err => {
-        console.error("Error fetching prediction history:", err);
-      });
+  const onPresetRange = (rangeStart, rangeEnd) => {
+    setStartDate(rangeStart);
+    setEndDate(rangeEnd);
   };
 
-  const predictedValueRaw = prediction ? prediction.predicted_pm25 : null;
-  const predictedValue = typeof predictedValueRaw === 'number'
-    ? predictedValueRaw
-    : (predictedValueRaw ? Number(predictedValueRaw) : null);
-
+  const predictedValueRaw = prediction?.predicted_pm25 ?? null;
+  const predictedValue = typeof predictedValueRaw === 'number' ? predictedValueRaw : Number(predictedValueRaw) || null;
   const airQuality = getAirQualityCategory(predictedValue);
 
   const readingsRangeLabel = useMemo(() => {
@@ -170,23 +193,20 @@ function App() {
     return `${oldest} – ${newest}`;
   }, [filteredReadings]);
 
-  const onPresetRange = (rangeStart, rangeEnd) => {
-    setStartDate(rangeStart);
-    setEndDate(rangeEnd);
-  };
-
   return (
     <div className="app-container">
       <header className="app-header">
         <div className="header-left">
-          {/* <div className="muted">Current User's Login</div> */}
-          {/* <div className="title-line">
-            <span className="badge badge-user">Tilak2203</span>
-          </div> */}
-          <div className="muted">{readings.length ? `Available Data: July 1, 2025 to ${maxDate.toLocaleDateString()}` : 'Loading available range...'}</div>
+          <div className="muted">
+            {readings.length 
+              ? `Available Data: July 1, 2025 to ${maxDate.toLocaleDateString()}`
+              : 'Loading available range...'}
+          </div>
           <div className="connection-row">
-            <span className={`badge ${connectionStatus === 'connected' ? 'badge-success' : (connectionStatus === 'checking' ? 'badge-warn' : 'badge-error')}`}>
-              {connectionStatus === 'connected' ? 'MongoDB Connected' : connectionStatus === 'checking' ? 'Checking MongoDB...' : 'MongoDB Error'}
+            <span className={`badge ${connectionStatus === 'connected' ? 'badge-success' : 
+                                   connectionStatus === 'checking' ? 'badge-warn' : 'badge-error'}`}>
+              {connectionStatus === 'connected' ? 'MongoDB Connected' : 
+               connectionStatus === 'checking' ? 'Checking MongoDB...' : 'MongoDB Error'}
             </span>
           </div>
         </div>
@@ -232,7 +252,7 @@ function App() {
                 minDate={minDate}
                 maxDate={maxDate}
                 onSelect={onPresetRange}
-                disabled={!readings.length}
+                disabled={loading || !readings.length}
               />
 
               <button
@@ -255,7 +275,7 @@ function App() {
       {error && (
         <div className="error-banner">
           <span>{error}</span>
-          <button className="btn btn-ghost" onClick={() => setError(null)} aria-label="Dismiss error">×</button>
+          <button className="btn btn-ghost" onClick={() => setError(null)}>×</button>
         </div>
       )}
 
@@ -266,7 +286,7 @@ function App() {
               <LeftPanel data={filteredReadings} loading={loading} />
             </div>
 
-            <div
+            <div 
               className={`panel prediction-panel card aqi-${airQuality.key}`}
               style={{ background: airQuality.bg }}
             >
@@ -328,8 +348,8 @@ function App() {
                               minute: "2-digit"
                             })}
                           </td>
-                          <td className="p-2">{Number(row.actual).toFixed(2)}</td>
-                          <td className="p-2">{Number(row.predicted).toFixed(2)}</td>
+                          <td className="p-2">{Number(row.actual ?? 0).toFixed(2)}</td>
+                          <td className="p-2">{Number(row.predicted ?? 0).toFixed(2)}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -352,7 +372,8 @@ function App() {
 
           <div className="dashboard-footer">
             <p>
-              Showing <strong>{filteredReadings.length}</strong> readings {readingsRangeLabel && <>from <strong>{readingsRangeLabel}</strong></>}
+              Showing <strong>{filteredReadings.length}</strong> readings
+              {readingsRangeLabel && <> from <strong>{readingsRangeLabel}</strong></>}
             </p>
           </div>
         </div>
@@ -360,9 +381,14 @@ function App() {
         <div className="no-selection-message">
           <div className="message-card">
             <h2>📅 Select a Date Range</h2>
-            <p>Choose a start and end date from the picker above or use a quick preset to display air quality data.</p>
+            <p>Choose dates manually or use the quick presets below</p>
             <div className="empty-cta">
-              <QuickRange minDate={minDate} maxDate={maxDate} onSelect={onPresetRange} disabled={!readings.length} />
+              <QuickRange 
+                minDate={minDate} 
+                maxDate={maxDate} 
+                onSelect={onPresetRange} 
+                disabled={loading || !readings.length}
+              />
             </div>
           </div>
         </div>
